@@ -1,0 +1,170 @@
+---
+title: "Case Study"
+subtitle: "Binary classification NLP problem for BRAIN ONE"
+author: "Ronny Hein"
+date: "19 Oktober 2019"
+fontsize: 10pt
+output: beamer_presentation
+---
+
+```{r setup, include=FALSE}
+# clean environment
+rm(list=ls())
+set.seed(109)
+
+# load packages
+library(ndjson)
+library(dplyr)
+library(caret)
+library(quanteda)
+library(RColorBrewer)
+library(ggplot2)
+library(pROC)
+
+# set markdown options
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE,
+                      fig.align='center')
+
+# data loading
+df <- as_tibble(stream_in("Clothing_Shoes_and_Jewelry_5.json"))
+```
+
+# Overview
+
+```{r}
+# preprocessing
+df <- df %>%
+  mutate(target = ifelse(overall <=2, 1, ifelse(overall >= 4, -1, 0))) %>% 
+  filter(target != 0)
+
+# randomize
+df <- df[sample(nrow(df)),]
+
+# prepare text corpus
+review_corpus <- corpus(df$reviewText)
+docvars(review_corpus) <- df$target
+
+review_dfm <- dfm(review_corpus, tolower = TRUE)
+review_dfm <- dfm_trim(review_dfm, min_count = 5, min_docfreq = 3)  
+review_dfm <- dfm_weight(review_dfm, type = "tfidf")
+
+# set train/test id
+train_id <- createDataPartition(df$reviewerID,
+                                p = .7,
+                                list = FALSE,
+                                times = 1)
+
+# make test/train
+y_train <- df[train_id, 'target']
+y_test <- df[-train_id, 'target']
+
+x_train <- review_dfm[as.numeric(train_id), ]
+x_test <- review_dfm[-as.numeric(train_id), ]
+```
+
+Facts:
+
+- `r ncol(df)` features 
+- `r nrow(df)` observations 
+- 70 % test/train split
+- `r nrow(train_id)` observations in train set 
+
+Insights: 
+
+- overall is left-skewed
+- target is imbalanced with `r round(prop.table(table(y_train$target))*100, digits = 2)[1]` % positive
+
+# Visualisation 
+
+Postive
+
+```{r fig.height=4,fig.width=6}
+# wordcloud per target
+positive_plot <- corpus_subset(review_corpus, docvar1==-1)
+positive_plot <- dfm(positive_plot, 
+                     tolower = TRUE, 
+                     remove_punct = TRUE, 
+                     remove_twitter = TRUE, 
+                     remove_numbers = TRUE,
+                     remove = stopwords("SMART"))
+
+positive_col <- brewer.pal(10, "Dark2")
+textplot_wordcloud(positive_plot, 
+                   max.words = 100, 
+                   #min.freq = 20, 
+                   colors = positive_col, 
+                   fixed.asp = TRUE)
+```
+
+# Visualisation 
+
+Negative
+
+```{r fig.height=4,fig.width=6}
+negative_plot <- corpus_subset(review_corpus, docvar1==1)
+negative_plot <- dfm(negative_plot, 
+                     tolower = TRUE, 
+                     remove_punct = TRUE, 
+                     remove_twitter = TRUE, 
+                     remove_numbers = TRUE,
+                     remove = stopwords("SMART"))
+
+negative_col <- brewer.pal(10, "Accent")
+textplot_wordcloud(negative_plot, 
+                   max.words = 100, 
+                   #min.freq = 20, 
+                   colors = negative_col, 
+                   fixed.asp = TRUE) -> b
+```
+
+# Model
+
+```{r}
+# train model
+nb_classifier <- textmodel_NB(x_train, y_train$target)
+
+# predict in train set
+pred <- predict(nb_classifier, x_train)
+```
+
+Bayes' theorem: $p(C_{k}\mid \mathbf {x} )={\frac {p(C_{k})\ p(\mathbf {x} \mid C_{k})}{p(\mathbf {x} )}}$
+
+Results on train set:
+
+```{r}
+knitr::kable(round(prop.table(table(predicted = pred$nb.predicted, actual = y_train$target))*100, digits = 2), 
+             caption = 'actual (cols) versus predicted (rows)')
+```
+
+# Evaluation 
+
+```{r}
+# predict in test set
+pred <- predict(nb_classifier, x_test)
+
+# get auc
+prednum <- ifelse(pred$nb.predicted==-1, 1, 2)
+auc <- roc(as.factor(y_test$target), prednum)
+```
+
+- accuracy of classifier on test: `r round(mean(pred$nb.predicted==y_test$target)*100, digits = 2)` %
+- true positive: `r round(prop.table(table(predicted = pred$nb.predicted, actual = y_test$target))*100, digits = 2)[1,1]` %
+- false negative: `r round(prop.table(table(predicted = pred$nb.predicted, actual = y_test$target))*100, digits = 2)[2,1]` %
+- area under the curve: `r round(auc$auc, digits = 2)`
+
+```{r fig.height=3, fig.width=4}
+plot(auc)
+```
+
+# Considerations
+
+1. more text preprocessing
+2. use x-fold cross-valiation 
+3. apply more models and tune parameters 
+4. try more advanced NLP methods like BERT
+
+# End
+
+Thank you
